@@ -1,0 +1,29 @@
+/* frontend/src/styles/global.css */
+
+/* VARIABLES ONLY */
+:root {
+  --blue-900: #1e3a8a;
+  --blue-700: #1d4ed8;
+  --blue-600: #2563eb;
+  --blue-500: #3b82f6;
+  --yellow-400: #facc15;
+  --muted-600: #6b7280;
+  --text-900: #111827;
+
+  --navbar-height: 72px;
+}
+
+/* LAYOUT HELPERS ONLY */
+.container {
+  max-width: 1250px;
+  width: 92%;
+  margin: 0 auto;
+}
+
+.page-with-navbar {
+  padding-top: var(--navbar-height);
+}
+
+.light {
+  background: #f7f8fb;
+}

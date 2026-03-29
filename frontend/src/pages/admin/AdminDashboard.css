@@ -1,0 +1,40 @@
+/* no code */
+.admin-dashboard {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 40px 20px;
+  background: #f5f7fb;
+}
+
+.admin-card {
+  width: 100%;
+  max-width: 520px;
+  background: #fff;
+  border-radius: 16px;
+  padding: 28px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.08);
+}
+
+.admin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.admin-form input,
+.admin-form select {
+  width: 100%;
+}
+
+.temp-box {
+  margin-top: 18px;
+  padding: 14px;
+  background: #eef6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  color: #1d4ed8;
+  font-weight: 600;
+}

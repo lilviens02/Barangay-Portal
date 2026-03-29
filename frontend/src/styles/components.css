@@ -1,0 +1,71 @@
+/* components.css */
+
+.card {
+  background: #ffffff;
+  padding: 40px 30px;
+  border-radius: 20px;
+  box-shadow: 0 15px 40px rgba(6, 11, 20, 0.06);
+  text-align: left;
+  transition: transform .28s cubic-bezier(.2,.8,.2,1), box-shadow .28s ease;
+}
+
+
+/* TABLE */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+
+
+
+.table th,
+.table td {
+  padding: 12px;
+  border-bottom: 1px solid #f1f1f1;
+  text-align: left;
+}
+
+
+
+/* STATUS */
+
+.status{
+padding:6px 12px;
+border-radius:20px;
+font-size:12px;
+font-weight:600;
+text-transform:capitalize;
+}
+
+
+/*Header*/
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 25px;
+}
+
+
+/* BADGES */
+.badge {
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.badge.pending {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+.badge.approved {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+.badge.rejected {
+  background: #fee2e2;
+  color: #dc2626;
+}

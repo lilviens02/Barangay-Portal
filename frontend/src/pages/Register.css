@@ -1,0 +1,11 @@
+/* frontend/src/pages/Register.css */
+
+
+/* reuse the same layout as Login */
+@import "./Login.css";
+
+
+/* If you prefer separate styling tweaks, override here */
+/* For simplicity we rely on Login.css for base styles */
+
+
