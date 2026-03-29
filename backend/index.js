@@ -3,12 +3,12 @@ BARANGAY E-DOCS SYSTEM
 FILE: backend/index.js
 DESCRIPTION: MAIN SERVER FILE (FINAL SECURE VERSION)
 ======================================================*/
-
 const express = require("express");
 const cors = require("cors");
 const bcrypt = require("bcrypt");
 const multer = require("multer");
 const path = require("path");
+const fs = require("fs");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
@@ -16,24 +16,72 @@ const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 
 require("dotenv").config();
-require("./services/emailListener");
-const generateCertificate = require("./services/certificateService");
+const ROLES = {
+  RESIDENT: "resident",
+  STAFF: "staff",
+  ADMIN: "superadmin"
+};
 
+//  JWT SECRET VALIDATION
+if (!process.env.JWT_SECRET) {
+  console.error("❌ CRITICAL ERROR: JWT_SECRET is missing in .env file!");
+  process.exit(1); 
+}
 
 const app = express();
 
-app.use(helmet());
+// ✅ Advanced Helmet: Para ma-view ang images/PDFs sa browser (Bonus Point)
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginResourcePolicy: false
+}));
 
+app.use(express.json()); 
+
+// ✅ Corrected CORS: Siguraduhin na may "true" ang credentials
+app.use(cors({
+  origin: process.env.CLIENT_URL || "http://localhost:5173",
+  credentials: true 
+}));
+
+//  RATE LIMITERS
+// Global Limiter (General protection)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100
+  max: 1000 
 });
-
 app.use(limiter);
 
-app.use(cors());
+/* 
+// Login Limiter (Brute-force protection - nextime nalang ito)
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 attempts lang
+  message: { message: "Too many login attempts, please try again after 15 minutes" }
+});
+*/
 
-app.use(express.json());
+// ✅ FIX NI SIR: FOLDER CHECKS USING ABSOLUTE PATHS
+const UPLOAD_DIR = path.join(__dirname, "uploads");
+const CERT_DIR = path.join(__dirname, "certificates");
+
+if (!fs.existsSync(UPLOAD_DIR)) {
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+  console.log("📁 Created uploads folder automatically.");
+}
+
+if (!fs.existsSync(CERT_DIR)) {
+  fs.mkdirSync(CERT_DIR, { recursive: true });
+  console.log("📁 Created certificates folder automatically.");
+}
+
+//  SERVICES
+require("./services/emailListener");
+const generateCertificate = require("./services/certificateService");
+
+/* ======================================================
+   ROUTES (DITO MO ILALAGAY ANG MGA API ENDPOINTS MO)
+   ====================================================== */
 
 
 /* ======================================================
@@ -81,8 +129,7 @@ const requireStaffReady = (req, res, next) => {
 SERVE UPLOADED FILES
 ======================================================*/
 
-app.use("/uploads", express.static("uploads"));
-
+app.use("/uploads", express.static(UPLOAD_DIR));
 
 
 /* ======================================================
@@ -93,12 +140,8 @@ const storage = multer.diskStorage({
     cb(null, "uploads/");
   },
   filename: function (req, file, cb) {
-    // Ngayon gagana na ito dahil may require("path") na tayo sa taas
     const ext = path.extname(file.originalname);
-    
-    // Random hex + timestamp para siguradong unique
     const uniqueName = Date.now() + "-" + crypto.randomBytes(4).toString("hex") + ext;
-    
     cb(null, uniqueName);
   }
 });
@@ -106,11 +149,17 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   fileFilter: (req, file, cb) => {
-    const allowedTypes = ["application/pdf", "image/png", "image/jpeg"];
-    if (allowedTypes.includes(file.mimetype)) {
+    const allowedMimeTypes = ["application/pdf", "image/png", "image/jpeg"];
+    const allowedExtensions = [".pdf", ".png", ".jpg", ".jpeg"];
+    const fileExt = path.extname(file.originalname).toLowerCase();
+
+    const isValidMime = allowedMimeTypes.includes(file.mimetype);
+    const isValidExt = allowedExtensions.includes(fileExt);
+
+    if (isValidMime && isValidExt) {
       cb(null, true);
     } else {
-      cb(new Error("Invalid file type"), false);
+      cb(new Error("Invalid file type. Only PDF, PNG, and JPG are allowed."), false);
     }
   },
   limits: {
@@ -182,28 +231,36 @@ db.getConnection((err, connection) => {
     console.log("✅ Connected to MySQL");
     connection.release();
 
-    createDefaultAdmin();
-    createDefaultStaff();
+    // ✅ FIX: Dito natin ilalagay ang condition ni Sir
+    // Gagana lang ang auto-create kung HINDI "production" ang mode natin.
+    if (process.env.NODE_ENV !== "production") {
+      createDefaultAdmin();
+      createDefaultStaff();
+    } else {
+      console.log("🛡️ Production Mode: Auto-creation of default accounts is DISABLED for security.");
+    }
   }
 });
+
 
 
 /* ======================================================
 EMAIL CONFIGURATION
 ======================================================*/
 
+
 const transporter = nodemailer.createTransport({
-
   service: "gmail",
-
   auth: {
     user: process.env.EMAIL,
     pass: process.env.EMAIL_PASS,
   }
-
 });
-// <--- nadadag --->
- const logEmail = async ({ 
+
+// ✅ 12. 🧾 LOGGING IMPROVEMENT (WITH IP & USER AGENT)
+// ✅ CORRECTED LOG EMAIL FUNCTION (POINT #12)
+const logEmail = async ({ 
+  req = null, 
   requestId = null,
   referenceNo = null,
   recipientEmail = null,
@@ -212,114 +269,17 @@ const transporter = nodemailer.createTransport({
   direction,
   status = null, 
 }) => {
-  //new 
+  // Extract IP and Browser info (User Agent)
+  const ip = req ? (req.headers['x-forwarded-for'] || req.socket.remoteAddress) : 'System';
+  const ua = req ? req.headers['user-agent'] : 'System Process';
+
   await dbp.query(`INSERT INTO email_audit_logs
-    (RequestID, ReferenceNo, RecipientEmail, Subject, Body, Direction, Status, CreatedAt)
-    VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
-    [requestId, referenceNo, recipientEmail, subject, body, direction, status]
+    (RequestID, ReferenceNo, RecipientEmail, Subject, Body, Direction, Status, IPAddress, UserAgent, CreatedAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+    [requestId, referenceNo, recipientEmail, subject, body, direction, status, ip, ua]
   );
 };
 
-// <--- HANGGANG DITO --->
-
-/* ======================================================
-CREATE DOCUMENT REQUEST (FR2)
-- generates reference number
-- saves uploaded file
-- sends confirmation email
-======================================================*/
-app.post("/api/requests", authenticateToken, upload.single("file"), async (req, res) => {
-  try {
-    if (req.user.role !== "resident") {
-      return res.status(403).json({ message: "Residents only" });
-    }
-
-    const user_id = req.user.id;
-    const { documentType, purpose } = req.body;
-    const filePath = req.file ? req.file.filename : null;
-
-    if (!documentType || !purpose) {
-      return res.status(400).json({ message: "Document type and purpose are required" });
-    }
-
-    // 1. Check for duplicates
-    const [duplicateRows] = await dbp.query(
-      `SELECT RequestID FROM requests 
-       WHERE ResidentID = ? AND DocumentType = ? AND Purpose = ? 
-       AND Status IN ('Pending', 'Approved')`,
-      [user_id, documentType, purpose]
-    );
-
-    if (duplicateRows.length > 0) {
-      return res.status(400).json({ message: "Duplicate request already exists" });
-    }
-
-    // 2. Generate Reference Number
-    const year = new Date().getFullYear();
-    const [lastRows] = await dbp.query("SELECT MAX(RequestID) as lastID FROM requests");
-    const number = String((lastRows[0].lastID || 0) + 1).padStart(4, "0");
-    const reference = `BRGY-${year}-${number}`;
-
-    // 3. Insert to Database (FIXED: Added insertResult here)
-    const [insertResult] = await dbp.query(
-      `INSERT INTO requests (ReferenceNo, ResidentID, DocumentType, Purpose, FilePath, Status, DateSubmitted)
-       VALUES (?, ?, ?, ?, ?, 'Pending', NOW())`,
-      [reference, user_id, documentType, purpose, filePath]
-    );
-
-    // KUKUNIN ANG ID PARA SA LOG
-    const newRequestId = insertResult.insertId; 
-    // 4. Email Notification & Logging
-    const [userResult] = await dbp.query(
-      "SELECT Email, Firstname FROM residents WHERE ResidentID = ?",
-      [user_id]
-    );
-
-    if (userResult.length > 0) {
-      const emailBody = `Good day ${userResult[0].Firstname},
-
-Your request has been submitted successfully.
-Reference Number: ${reference}
-Document Type: ${documentType}
-Purpose: ${purpose}`;
-
-      // ✅ EMAIL FAIL SAFE START
-      try {
-        await transporter.sendMail({
-          from: process.env.EMAIL,
-          to: userResult[0].Email,
-          subject: `Barangay Request Submitted - ${reference}`,
-          text: emailBody
-        });
-
-        await logEmail({
-          requestId: newRequestId,
-          referenceNo: reference,
-          recipientEmail: userResult[0].Email,
-          subject: `Barangay Request Submitted - ${reference}`,
-          body: emailBody,
-          direction: "outgoing",
-          status: "sent"
-        });
-        
-        console.log(`✅ Email sent & logged for ${reference}`);
-      } catch (err) {
-        // Kapag nag-fail ang email, mag-log lang sa console pero TULOY PA RIN ang response
-        console.error("❌ Email failed but request was saved:", err);
-      }
-      // ✅ EMAIL FAIL SAFE END
-    }
-
-    return res.json({
-      message: "Request submitted successfully",
-      reference: reference
-    });
-
-  } catch (error) {
-    console.error("Request submit error:", error);
-    return res.status(500).json({ message: "Server error" });
-  }
-});
 
 
 
@@ -354,13 +314,15 @@ app.get("/api/residents/me", authenticateToken, async (req, res) => {
   }
 });
 
+
+
 /* ======================================================
-CERTIFICATE FETCH ROUTE (ILAGAY DITO)
-======================================================*/
+CERTIFICATE FETCH ROUTE
 
 app.get("/api/certificates/:id", authenticateToken, requireStaffReady, async (req, res) => {
   try {
-    if (req.user.role !== "staff" && req.user.role !== "superadmin") {
+    // ✅ Ginamit na natin yung ROLES constant (Point #11)
+    if (req.user.role !== ROLES.STAFF && req.user.role !== ROLES.ADMIN) {
       return res.status(403).json({ message: "Access denied" });
     }
 
@@ -385,6 +347,38 @@ app.get("/api/certificates/:id", authenticateToken, requireStaffReady, async (re
     res.status(500).json({ message: "Server error" });
   }
 });
+======================================================*/
+app.get("/api/certificates/:id", authenticateToken, requireStaffReady, async (req, res) => {
+  try {
+    const requestId = req.params.id;
+
+    const [rows] = await dbp.query(
+      `SELECT c.*, r.Firstname, r.Lastname, req.Status
+       FROM requests req
+       LEFT JOIN certificates c ON c.RequestID = req.RequestID
+       JOIN residents r ON r.ResidentID = req.ResidentID
+       WHERE req.RequestID = ?`,
+      [requestId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "Request record not found." });
+    }
+
+    // Kung Approved na pero wala pang record sa certificates table
+    if (!rows[0].CertID) {
+      return res.status(404).json({ 
+        message: "Certificate file has not been generated yet. Please approve the request first." 
+      });
+    }
+
+    res.json(rows[0]);
+  } catch (error) {
+    console.error("Fetch certificate error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
 
 /* ======================================================
 AUTO CREATE DEFAULT ADMIN (RUNS WHEN SERVER STARTS)
@@ -486,10 +480,28 @@ app.post("/api/register", async (req, res) => {
   }
 
   try {
+    // ✅ DAGDAG NI SIR: 2.2 PRE-CHECK & NORMALIZATION
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    // I-check muna kung existing na ang email bago mag-insert
+    const [existing] = await dbp.query(
+      "SELECT ResidentID FROM residents WHERE LOWER(Email) = ?",
+      [normalizedEmail]
+    );
+
+    if (existing.length > 0) {
+      return res.status(400).json({ message: "Email already exists" });
+    }
+
+    // ✅ DAGDAG NI SIR: PASSWORD LENGTH CHECK
+    if (String(password).length < 8) {
+      return res.status(400).json({ message: "Password must be at least 8 characters" });
+    }
+
     // 3. HASH THE PASSWORD
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // 4. SQL QUERY (Idinagdag ang AccountStatus at "Pending" value)
+    // 4. SQL QUERY (Gamit na ang AccountStatus at "Pending")
     const sql = `
       INSERT INTO residents
       (Firstname, Middlename, Lastname, Address, DateOfBirth, Gender, ContactNo, Email, PasswordHash, DateRegistered, AccountStatus)
@@ -506,9 +518,9 @@ app.post("/api/register", async (req, res) => {
         birthdate || null,
         gender,
         contact || null,
-        email,
+        normalizedEmail, // ✅ Gamit na ang normalized version dito
         hashedPassword,
-        "Pending" // <--- Eto yung instruction ni sir (Default Status)
+        "Pending"
       ],
       (err) => {
         // 5. DATABASE ERROR HANDLING
@@ -519,10 +531,10 @@ app.post("/api/register", async (req, res) => {
           return res.status(500).json({ message: "Database error" });
         }
 
-        // 6. SEND CONFIRMATION EMAIL
+        // 6. SEND CONFIRMATION EMAIL (Nandito pa rin ito!)
         transporter.sendMail({
           from: process.env.EMAIL,
-          to: email,
+          to: normalizedEmail,
           subject: "Barangay E‑Docs - Registration Received",
           text: `Welcome ${firstname}! Your account has been created and is currently PENDING for approval. Please wait for the barangay staff to verify your account.`
         }, (emailErr) => {
@@ -622,74 +634,87 @@ app.post("/api/create-staff", authenticateToken, async (req, res) => {
 
 
 /* ======================================================
-LOGIN ROUTE (FINAL SECURE VERSION)
-- Supports: Residents, Staff, Superadmin
-- Checks: Password, Account Status (Pending/Approved), 
-  and Password Change requirements
+LOGIN ROUTE (no limiter)
+-  Using ROLES constant
+- Resolved Duplicate Route
 ======================================================*/
 app.post("/api/login", async (req, res) => {
+  // ✅ DAGDAG NI SIR: LOGIN VALIDATION & NORMALIZATION
   const { email, password, role } = req.body;
+  const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
 
-  let table = "";
-  let sql = "";
-  let values = [];
 
-  // 1. DETERMINE TABLE BASED ON ROLE
-  if (role === "resident") {
-    table = "residents";
-    sql = `SELECT * FROM residents WHERE Email = ?`;
-    values = [email];
-  } else if (role === "staff") {
-    table = "barangay_staff";
-    sql = `SELECT * FROM barangay_staff WHERE Email = ? AND RoleName = 'staff'`;
-    values = [email];
-  } else if (role === "superadmin") {
-    table = "barangay_staff";
-    sql = `SELECT * FROM barangay_staff WHERE Email = ? AND RoleName = 'superadmin'`;
-    values = [email];
+  if (!email || !password || !role) {
+    return res.status(400).json({ message: "Email, password, and role are required" });
+  }
+
+
+  const normalizedEmail = String(email).trim().toLowerCase();
+
+
+  let table = "", sql = "", values = [];
+
+
+  // ✅ GINAMIT ANG normalizedEmail SA VALUES PARA SA SEARCH
+  if (role === ROLES.RESIDENT) {
+    sql = `SELECT * FROM residents WHERE LOWER(Email) = ?`;
+    values = [normalizedEmail];
+  } else if (role === ROLES.STAFF) {
+    sql = `SELECT * FROM barangay_staff WHERE LOWER(Email) = ? AND RoleName = 'staff'`;
+    values = [normalizedEmail];
+  } else if (role === ROLES.ADMIN) {
+    sql = `SELECT * FROM barangay_staff WHERE LOWER(Email) = ? AND RoleName = 'superadmin'`;
+    values = [normalizedEmail];
   } else {
     return res.status(400).json({ message: "Invalid role" });
   }
 
+
   db.query(sql, values, async (err, results) => {
-    if (err) return res.status(500).json({ message: "Database error" });
-    
-    // 2. CHECK IF USER EXISTS
+    if (err) {
+      console.log(`❌ Login Error: ${normalizedEmail} | IP: ${ip} | Error: ${err.message}`);
+      return res.status(500).json({ message: "Database error" });
+    }
+   
     if (results.length === 0) {
+      console.log(`⚠️ Login Failed: ${normalizedEmail} not found | Role: ${role} | IP: ${ip}`);
       return res.status(400).json({ message: "User not found" });
     }
 
+
     const user = results[0];
 
-    // 3. VERIFY PASSWORD
-    const match = await bcrypt.compare(password, user.PasswordHash);
-    if (!match) return res.status(400).json({ message: "Wrong password" });
 
-    
-    // Haharangin ang resident kung hindi pa 'Approved' ang AccountStatus
-    if (role === "resident" && user.AccountStatus !== "Approved") {
-      return res.status(403).json({
-        message: "Your account is still pending approval. Please wait for the barangay staff to verify your registration."
-      });
+    const match = await bcrypt.compare(password, user.PasswordHash);
+    if (!match) {
+      console.log(`🚫 Login Failed: ${normalizedEmail} wrong password | IP: ${ip}`);
+      return res.status(400).json({ message: "Wrong password" });
     }
 
-    // 4. PREPARE USER DATA FOR TOKEN
-    const userId = table === "residents" ? user.ResidentID : user.StaffID;
-    const userRole = user.RoleName || "resident";
-    
-    // 5. STAFF PASSWORD CHANGE CHECK 
+
+    if (role === ROLES.RESIDENT && user.AccountStatus !== "Approved") {
+      console.log(`⏳ Login Blocked: ${normalizedEmail} is ${user.AccountStatus} | IP: ${ip}`);
+      return res.status(403).json({ message: "Your account is still pending approval." });
+    }
+
+
+    // ✅ POINT #7: Log SUCCESSFUL login
+    console.log(`✅ Login Success: ${normalizedEmail} | Role: ${role} | IP: ${ip}`);
+
+
+    const userId = (role === ROLES.RESIDENT) ? user.ResidentID : user.StaffID;
+    const userRole = user.RoleName || ROLES.RESIDENT;
     const mustChange = user.MustChangePassword === 1;
+
 
     // 6. GENERATE JWT TOKEN
     const token = jwt.sign(
-      {
-        id: userId,
-        role: userRole,
-        mustChangePassword: mustChange
-      },
+      { id: userId, role: userRole, mustChangePassword: mustChange },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
+
+    // --- TINANGGAL NA YUNG res.cookie DITO ---
 
     // 7. SUCCESS RESPONSE
     res.json({
@@ -906,12 +931,15 @@ GET REQUESTS BY RESIDENT
 ======================================================*/
 app.get("/api/resident-requests/:id", authenticateToken, (req, res) => {
 
+
   // ✅ SECURITY FIX
   if (req.user.id != req.params.id) {
     return res.status(403).json({ message: "Access denied" });
   }
 
+
   const { id } = req.params;
+
 
   const sql = `
   SELECT *
@@ -920,7 +948,9 @@ app.get("/api/resident-requests/:id", authenticateToken, (req, res) => {
   ORDER BY DateSubmitted DESC
   `;
 
+
   db.query(sql, [id], (err, results) => {
+
 
     if (err) {
       return res.status(500).json({
@@ -928,11 +958,67 @@ app.get("/api/resident-requests/:id", authenticateToken, (req, res) => {
       });
     }
 
+
     res.json(results);
+
 
   });
 
+
 });
+
+-
+app.get("/api/messages/:requestId", authenticateToken, async (req, res) => {
+  try {
+    const requestId = Number(req.params.requestId);
+
+    const [requestRows] = await dbp.query(
+      `SELECT r.RequestID, r.ResidentID, r.ReferenceNo, r.DocumentType, r.Status,
+              res.Firstname, res.Lastname, res.Email
+       FROM requests r
+       JOIN residents res ON res.ResidentID = r.ResidentID
+       WHERE r.RequestID = ?`,
+      [requestId]
+    );
+
+    if (requestRows.length === 0) {
+      return res.status(404).json({ message: "Request not found" });
+    }
+
+    const request = requestRows[0];
+
+    if (req.user.role === "resident" && req.user.id !== request.ResidentID) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    const [messages] = await dbp.query(
+      `SELECT MessageID, RequestID, Sender, Body, Timestamp
+       FROM messages
+       WHERE RequestID = ?
+       ORDER BY Timestamp ASC`,
+      [requestId]
+    );
+
+    const [emailLogs] = await dbp.query(
+      `SELECT EmailLogID, RequestID, ReferenceNo, RecipientEmail, Subject, Body, Direction, Status, CreatedAt
+       FROM email_audit_logs
+       WHERE RequestID = ? OR ReferenceNo = ?
+       ORDER BY CreatedAt ASC`,
+      [requestId, request.ReferenceNo]
+    );
+
+    return res.json({
+      request,
+      messages,
+      emailLogs
+    });
+  } catch (error) {
+    console.error("Fetch messages error:", error);
+    return res.status(500).json({ message: "Server error" });
+  }
+});
+
+
 
 
 
@@ -960,302 +1046,444 @@ app.get("/api/pending-residents", authenticateToken, requireStaffReady, async (r
   }
 });
 
+
 /* ======================================================
-   PART D: APPROVE RESIDENT
-   - Action para maging 'Approved' ang account
+   PART D: APPROVE RESIDENT (WITH EMAIL NOTIFICATION)
    ======================================================*/
 app.put("/api/residents/:id/approve", authenticateToken, requireStaffReady, async (req, res) => {
-  if (req.user.role !== "staff" && req.user.role !== "superadmin") {
+  if (req.user.role !== ROLES.STAFF && req.user.role !== ROLES.ADMIN) {
     return res.status(403).json({ message: "Access denied" });
   }
 
   try {
+    // 1. I-update ang status sa Database
     await dbp.query(
-      `UPDATE residents
-       SET AccountStatus = 'Approved',
-           ApprovedBy = ?,
-           ApprovedAt = NOW()
-       WHERE ResidentID = ?`,
+      `UPDATE residents SET AccountStatus = 'Approved', ApprovedBy = ?, ApprovedAt = NOW() WHERE ResidentID = ?`,
       [req.user.id, req.params.id]
     );
-    res.json({ message: "Resident approved successfully" });
+
+    // 2. KUNIN ANG EMAIL (Para sa Notification)
+    const [user] = await dbp.query(
+      "SELECT Email, Firstname FROM residents WHERE ResidentID = ?",
+      [req.params.id]
+    );
+
+    if (user.length > 0) {
+      const { Email, Firstname } = user[0];
+      const subject = "Barangay E-Docs - Account Approved";
+      const body = `Hello ${Firstname}, your account has been APPROVED. You can now log in to the portal.`;
+
+      // 3. SEND EMAIL
+      await transporter.sendMail({ from: process.env.EMAIL, to: Email, subject, text: body });
+
+      // 4. LOG EMAIL (Bonus Points!)
+      await logEmail({
+        req,
+        recipientEmail: Email,
+        subject,
+        body,
+        direction: "outgoing",
+        status: "sent"
+      });
+    }
+
+    res.json({ message: "Resident approved and notified successfully" });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Database error" });
+    console.error("Approve Error:", error);
+    res.status(500).json({ message: "Server error" });
   }
 });
 
 /* ======================================================
-   PART E: REJECT RESIDENT
-   - Action para i-reject ang registration
+   PART E: REJECT RESIDENT (WITH EMAIL NOTIFICATION)
    ======================================================*/
 app.put("/api/residents/:id/reject", authenticateToken, requireStaffReady, async (req, res) => {
-  if (req.user.role !== "staff" && req.user.role !== "superadmin") {
+  if (req.user.role !== ROLES.STAFF && req.user.role !== ROLES.ADMIN) {
     return res.status(403).json({ message: "Access denied" });
   }
 
   try {
+    // 1. I-update ang status sa Database
     await dbp.query(
-      `UPDATE residents
-       SET AccountStatus = 'Rejected',
-           ApprovedBy = ?,
-           ApprovedAt = NOW()
-       WHERE ResidentID = ?`,
+      `UPDATE residents SET AccountStatus = 'Rejected', ApprovedBy = ?, ApprovedAt = NOW() WHERE ResidentID = ?`,
       [req.user.id, req.params.id]
     );
-    res.json({ message: "Resident rejected successfully" });
+
+    // 2. KUNIN ANG EMAIL
+    const [user] = await dbp.query(
+      "SELECT Email, Firstname FROM residents WHERE ResidentID = ?",
+      [req.params.id]
+    );
+
+    if (user.length > 0) {
+      const { Email, Firstname } = user[0];
+      const subject = "Barangay E-Docs - Account Rejected";
+      const body = `Hello ${Firstname}, your registration was REJECTED. Please contact the barangay office for details.`;
+
+      // 3. SEND EMAIL
+      await transporter.sendMail({ from: process.env.EMAIL, to: Email, subject, text: body });
+
+      // 4. LOG EMAIL
+      await logEmail({
+        req,
+        recipientEmail: Email,
+        subject,
+        body,
+        direction: "outgoing",
+        status: "sent"
+      });
+    }
+
+    res.json({ message: "Resident rejected and notified successfully" });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Database error" });
+    console.error("Reject Error:", error);
+    res.status(500).json({ message: "Server error" });
   }
 });
 
 
 
-
-
-
 /* ======================================================
-UPDATE REQUEST STATUS (FINAL VERSION)
-- adds email notification
-- adds logging (timestamp + staffID
-======================================================*/
-app.put("/api/requests/:id/status", authenticateToken, requireStaffReady, async (req, res) => {
+   CREATE DOCUMENT REQUEST (IMPROVED VERSION)
+  
+   ====================================================== */
+app.post("/api/requests", authenticateToken, upload.single("file"), async (req, res) => {
   try {
-    if (req.user.role !== "staff" && req.user.role !== "superadmin") {
-      return res.status(403).json({ message: "Access denied" });
+    // ✅ POINT #11: Ginamit ang ROLES Constant
+    if (req.user.role !== ROLES.RESIDENT) {
+      return res.status(403).json({ message: "Residents only" });
     }
 
-    const { id } = req.params;
-    const staff_id = req.user.id;
-    const { status } = req.body;
 
-    if (!status) {
-      return res.status(400).json({ message: "Status is required" });
+    const user_id = req.user.id;
+    const { documentType, purpose } = req.body;
+
+    // --- PINALITAN/IDINAGDAG NA PART START ---
+    if (!documentType || !purpose) {
+      return res.status(400).json({ message: "Document type and purpose are required" });
+    }
+    // --- PINALITAN/IDINAGDAG NA PART END ---
+
+    const filePath = req.file ? req.file.filename : null;
+
+
+    // 1. IMPROVED DUPLICATE CHECK
+    const [duplicateRows] = await dbp.query(
+      `SELECT RequestID FROM requests
+       WHERE ResidentID = ? AND DocumentType = ? AND Purpose = ?
+       AND Status != 'Rejected'`,
+      [user_id, documentType, purpose]
+    );
+
+
+    if (duplicateRows.length > 0) {
+      return res.status(400).json({ message: "An active request already exists for this document." });
     }
 
+
+    // 2. INSERT FIRST (Para makuha ang unique Auto-Increment ID)
+    const [insertResult] = await dbp.query(
+      `INSERT INTO requests (ResidentID, DocumentType, Purpose, FilePath, Status, DateSubmitted)
+       VALUES (?, ?, ?, ?, 'Pending', NOW())`,
+      [user_id, documentType, purpose, filePath]
+    );
+
+
+    const newId = insertResult.insertId;
+    const year = new Date().getFullYear();
+    const reference = `BRGY-${year}-${String(newId).padStart(4, "0")}`;
+
+
+    // 3. UPDATE REFERENCE
     await dbp.query(
-      `UPDATE requests
-       SET Status = ?, ProcessedBy = ?, DateProcessed = NOW()
-       WHERE RequestID = ?`,
-      [status, staff_id, id]
+      `UPDATE requests SET ReferenceNo = ? WHERE RequestID = ?`,
+      [reference, newId]
     );
 
-    const [result] = await dbp.query(
-      `SELECT r.*, u.Email, u.Firstname, u.Lastname
-       FROM requests r
-       JOIN residents u ON r.ResidentID = u.ResidentID
-       WHERE r.RequestID = ?`,
-      [id]
-    );
 
-    if (result.length === 0) {
-      return res.status(404).json({ message: "Request not found" });
+    // 4. EMAIL NOTIFICATION & LOGGING
+    const [userResult] = await dbp.query("SELECT Email, Firstname FROM residents WHERE ResidentID = ?", [user_id]);
+   
+    if (userResult.length > 0) {
+      try {
+        const emailBody = `Reference: ${reference}\nDocument: ${documentType}`;
+        await transporter.sendMail({ from: process.env.EMAIL, to: userResult[0].Email, subject: "Request Submitted", text: emailBody });
+       
+        // ✅ POINT #12: Kasama na ang 'req' para sa IP Address at User Agent logging
+        await logEmail({
+          req, // <--- IPASA ANG req DITO PARA SA BONUS POINTS
+          requestId: newId,
+          referenceNo: reference,
+          recipientEmail: userResult[0].Email,
+          subject: "Request Submitted",
+          body: emailBody,
+          direction: "outgoing",
+          status: "sent"
+        });
+      } catch (err) {
+        console.error("Email notification failed:", err);
+      }
     }
 
-    const data = result[0];
 
-    await transporter.sendMail({
-      from: process.env.EMAIL,
-      to: data.Email,
-      subject: "Barangay Request Update",
-      text: `Good day!
+    return res.json({ message: "Request submitted successfully", reference });
 
-Your request with reference number ${data.ReferenceNo} has been ${status}.
 
-Thank you for using Barangay E-Docs System.`
-    });
-
-    await logEmail({
-      requestId: data.RequestID,
-      referenceNo: data.ReferenceNo,
-      recipientEmail: data.Email,
-      subject: "Barangay Request Update",
-      body: `Your request with reference number ${data.ReferenceNo} has been ${status}.`,
-      direction: "outgoing",
-      status: "sent"
-    });
-
-    if (String(status).toLowerCase() === "approved") {
-      const certificatePath = `certificates/${data.ReferenceNo}.pdf`;
-
-      await generateCertificate(
-        {
-          name: `${data.Firstname} ${data.Lastname}`,
-          document: data.DocumentType,
-          purpose: data.Purpose,
-          reference: data.ReferenceNo,
-          date: new Date().toLocaleDateString(),
-          signedBy: req.user.id
-        },
-        certificatePath
-      );
-
-      await dbp.query(
-        `INSERT INTO certificates
-         (RequestID, ReferenceNo, CertName, Description, DateIssued, SignedBy, FilePath)
-         VALUES (?, ?, ?, ?, NOW(), ?, ?)`,
-        [
-          data.RequestID,
-          data.ReferenceNo,
-          data.DocumentType,
-          data.Purpose,
-          staff_id,
-          certificatePath
-        ]
-      );
-    }
-
-    await dbp.query(
-      `INSERT INTO request_logs
-       (RequestID, StaffID, Status, ActionDate)
-       VALUES (?, ?, ?, NOW())`,
-      [id, staff_id, status]
-    );
-
-    return res.json({ message: "Updated successfully" });
   } catch (error) {
-    console.error("Update request status error:", error);
+    console.error("Submission error:", error);
     return res.status(500).json({ message: "Server error" });
   }
 });
 
-/* BUBURAHIN PAG GUMANA NA YUNG EMAIL FUNCTIONALITY, KASI MAY KINALAMAN YUNG PAG-APPROVE SA PAG-GENERATE NG CERTIFICATE, AT AYAW NATIN MA-DISTURB YUNG FLOW NA YUN. 
-app.put("/api/requests/:id/status", authenticateToken, requireStaffReady, (req, res) => {
-
-  if (req.user.role !== "staff" && req.user.role !== "superadmin") {
-    return res.status(403).json({ message: "Access denied" });
-  }
-
-  const { id } = req.params;
-  const staff_id = req.user.id;
-  const { status } = req.body;
-
-  db.query(
-    `UPDATE requests
-     SET Status=?, ProcessedBy=?, DateProcessed=NOW()
-     WHERE RequestID=?`,
-    [status, staff_id, id],
-    (err) => {
-
-      if (err) {
-        console.log("❌ UPDATE ERROR:", err);
-        return res.status(500).json({ message: "Update failed" });
-      }
-
-      // 🔥 GET REQUEST DETAILS
-      db.query(`
-        SELECT r.*, u.Email
-        FROM requests r
-        JOIN residents u ON r.ResidentID = u.ResidentID
-        WHERE r.RequestID = ?
-      `, [id], (err, result) => {
-
-        if (err) {
-          console.log("❌ QUERY ERROR:", err);
-          return;
-        }
-
-        console.log("DEBUG RESULT:", result);
-
-        if (result.length > 0) {
-
-          const data = result[0];
-
-          console.log("📧 Sending email to:", data.Email);
-
-          // ✅ SEND EMAIL (WITH ERROR LOGGING)
-          transporter.sendMail({
-            from: process.env.EMAIL,
-            to: data.Email,
-            subject: "Barangay  Request Update",
-            text: `Good day!
-
-              Your request with reference number ${data.ReferenceNo} has been ${status}.
-
-              Thank you for using Barangay E-Docs System.`
-              
-          }, (err, info) => {
-            if (err) {
-              console.log("❌ Email failed:", err);
-            } else {
-              console.log("✅ Email sent:", info.response);
-            }
-          });
-
-          // ✅ AUTO GENERATE CERTIFICATE
-           if (status.toLowerCase() === "approved") {
-
-  const filePath = `certificates/${data.ReferenceNo}.pdf`;
-
-  generateCertificate({
-    name: data.Firstname + " " + data.Lastname,
-    document: data.DocumentType,
-    purpose: data.Purpose,
-    reference: data.ReferenceNo,
-    date: new Date().toLocaleDateString()
-  }, filePath);
-
-  db.query(`
-    INSERT INTO certificates
-    (RequestID, ReferenceNo, CertName, Description, DateIssued, SignedBy, FilePath)
-    VALUES (?, ?, ?, ?, NOW(), ?, ?)
-  `, [
-    data.RequestID,
-    data.ReferenceNo,
-    data.DocumentType,
-    data.Purpose,
-    staff_id,
-    filePath
-  ]);
-
-}
-          // ✅ LOGGING
-          db.query(`
-            INSERT INTO request_logs
-            (RequestID, StaffID, Status, ActionDate)
-            VALUES (?, ?, ?, NOW())
-          `, [id, staff_id, status]);
-
-        } else {
-          console.log("❌ No data found for request ID:", id);
-        }
-
-      });
-
-      res.json({ message: "Updated successfully" });
-
-    }
-  );
-
-});*/
 
 
 /* ======================================================
-DOWNLOAD CERTIFICATE
+DOWNLOAD CERTIFICATE 
+ Uses path.resolve for absolute path safety
+Uses ROLES constants
 ======================================================*/
-app.get("/api/certificates/download/:reference", authenticateToken, requireStaffReady, (req,res)=>{
-  if (req.user.role !== "staff" && req.user.role !== "superadmin") {
+app.get("/api/certificates/download/:reference", authenticateToken, requireStaffReady, (req, res) => {
+  // ✅ POINT #11: Ginamit ang ROLES Constant para iwas typo
+  if (req.user.role !== ROLES.STAFF && req.user.role !== ROLES.ADMIN) {
     return res.status(403).json({ message: "Access denied" });
   }
-const { reference } = req.params;
+
+  const { reference } = req.params;
 
   db.query(
-    "SELECT FilePath FROM certificates WHERE ReferenceNo=?",
+    "SELECT FilePath FROM certificates WHERE ReferenceNo = ?",
     [reference],
-    (err,result)=>{
-
-      if(err || result.length === 0){
-        return res.status(404).json({message:"Certificate not found"});
+    (err, result) => {
+      if (err || result.length === 0) {
+        return res.status(404).json({ message: "Certificate not found" });
       }
 
-      res.download(result[0].FilePath);
-
+      // ✅ POINT #5: MAS SAFE VERSION (Absolute Path)
+      // Gagamit tayo ng path.resolve para sigurado ang location ng file sa server
+      const absolutePath = path.resolve(__dirname, result[0].FilePath);
+      
+      res.download(absolutePath, (err) => {
+        if (err) {
+          console.error("❌ Download error:", err);
+          // Kung hindi na-send ang headers, mag-reply ng error
+          if (!res.headersSent) {
+            res.status(404).json({ message: "File could not be found on the server" });
+          }
+        }
+      });
     }
   );
-
 });
 
+
+/* ======================================================
+   CERTIFICATE OVERWRITE RISK FIX & STAFF ID FIX (2.4)
+   APPROVE REQUEST & GENERATE UNIQUE PDF
+   ======================================================*/
+app.post("/api/requests/:id/approve", authenticateToken, requireStaffReady, async (req, res) => {
+  try {
+    if (req.user.role !== ROLES.STAFF && req.user.role !== ROLES.ADMIN) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    const requestId = Number(req.params.id);
+
+    const [rows] = await dbp.query(
+      `SELECT r.*, res.Firstname, res.Middlename, res.Lastname, res.Email
+       FROM requests r
+       JOIN residents res ON r.ResidentID = res.ResidentID
+       WHERE r.RequestID = ?`,
+      [requestId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "Request not found" });
+    }
+
+    const requestData = rows[0];
+
+    if (String(requestData.Status).toLowerCase() === "rejected") {
+      return res.status(400).json({ message: "Rejected requests cannot be approved." });
+    }
+
+    const [existingCert] = await dbp.query(
+      "SELECT CertID FROM certificates WHERE RequestID = ?",
+      [requestId]
+    );
+
+    if (existingCert.length > 0) {
+      return res.status(400).json({ message: "Certificate already generated for this request." });
+    }
+
+    const fileName = `${requestData.ReferenceNo}-${Date.now()}.pdf`;
+    const certificatePath = path.join(CERT_DIR, fileName);
+    const storedPath = path.relative(__dirname, certificatePath);
+
+    const pdfData = {
+      name: `${requestData.Firstname} ${requestData.Lastname}`,
+      document: requestData.DocumentType,
+      purpose: requestData.Purpose,
+      reference: requestData.ReferenceNo,
+      date: new Date().toLocaleDateString(),
+      signedBy: req.user.role === ROLES.ADMIN ? "Superadmin" : "Barangay Staff"
+    };
+
+    await generateCertificate(pdfData, certificatePath);
+
+    await dbp.query(
+      `UPDATE requests
+       SET Status = 'Approved', ProcessedBy = ?, DateProcessed = NOW()
+       WHERE RequestID = ?`,
+      [req.user.id, requestId]
+    );
+
+    await dbp.query(
+      `INSERT INTO certificates
+       (RequestID, ReferenceNo, CertName, Description, DateIssued, SignedBy, FilePath)
+       VALUES (?, ?, ?, ?, NOW(), ?, ?)`,
+      [
+        requestId,
+        requestData.ReferenceNo,
+        requestData.DocumentType,
+        requestData.Purpose,
+        req.user.id,
+        storedPath
+      ]
+    );
+
+    await dbp.query(
+      `INSERT INTO request_logs (RequestID, StaffID, Status, ActionDate)
+       VALUES (?, ?, ?, NOW())`,
+      [requestId, req.user.id, "Approved"]
+    );
+
+    const subject = "Barangay E-Docs - Request Approved";
+    const body = `Hello ${requestData.Firstname}, your request ${requestData.ReferenceNo} has been APPROVED. Please print or wait for collection instructions.`;
+
+    await transporter.sendMail({
+      from: process.env.EMAIL,
+      to: requestData.Email,
+      subject,
+      text: body
+    });
+
+    if (typeof logEmail === "function") {
+      await logEmail({
+        req,
+        requestId,
+        referenceNo: requestData.ReferenceNo,
+        recipientEmail: requestData.Email,
+        subject,
+        body,
+        direction: "outgoing",
+        status: "sent"
+      });
+    }
+
+    return res.json({
+      message: "Certificate generated successfully!",
+      fileName
+    });
+  } catch (error) {
+    console.error("Approval Error:", error);
+    return res.status(500).json({ message: "Failed to approve and generate certificate" });
+  }
+});
+
+// ✅ REPLACED: FIX REJECTION LOGS AND EMAIL (2.5)
+app.post("/api/requests/:id/reject", authenticateToken, requireStaffReady, async (req, res) => {
+  try {
+    if (req.user.role !== ROLES.STAFF && req.user.role !== ROLES.ADMIN) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    const requestId = Number(req.params.id);
+
+    const [rows] = await dbp.query(
+      `SELECT r.*, res.Firstname, res.Email
+       FROM requests r
+       JOIN residents res ON res.ResidentID = r.ResidentID
+       WHERE r.RequestID = ?`,
+      [requestId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "Request not found" });
+    }
+
+    const requestData = rows[0];
+
+    // Update Status with Staff ID
+    await dbp.query(
+      `UPDATE requests
+       SET Status = 'Rejected', ProcessedBy = ?, DateProcessed = NOW()
+       WHERE RequestID = ?`,
+      [req.user.id, requestId]
+    );
+
+    // Add to Request Logs
+    await dbp.query(
+      `INSERT INTO request_logs (RequestID, StaffID, Status, ActionDate)
+       VALUES (?, ?, ?, NOW())`,
+      [requestId, req.user.id, "Rejected"]
+    );
+
+    const subject = "Barangay E-Docs - Request Rejected";
+    const body = `Hello ${requestData.Firstname}, your request ${requestData.ReferenceNo} has been REJECTED. Please contact the barangay office for details.`;
+
+    // Notify via Email
+    await transporter.sendMail({
+      from: process.env.EMAIL,
+      to: requestData.Email,
+      subject,
+      text: body
+    });
+
+    // Log the email action
+    if (typeof logEmail === "function") {
+      await logEmail({
+        req,
+        requestId,
+        referenceNo: requestData.ReferenceNo,
+        recipientEmail: requestData.Email,
+        subject,
+        body,
+        direction: "outgoing",
+        status: "sent"
+      });
+    }
+
+    return res.json({ message: "Request has been rejected and resident notified." });
+  } catch (error) {
+    console.error("Reject Error:", error);
+    return res.status(500).json({ message: "Database error" });
+  }
+});
+
+
+/* ======================================================
+   GLOBAL ERROR HANDLER (POINT #9 FIX)
+   - Nilalagay ito sa PINAKABABA ng index.js
+   - Sasalo sa Multer errors at iba pang server errors
+   ====================================================== */
+app.use((err, req, res, next) => {
+  // 1. Check kung ang error ay galing sa Multer (e.g., File too large)
+  if (err instanceof multer.MulterError) {
+    if (err.code === "LIMIT_FILE_SIZE") {
+      return res.status(400).json({ message: "File is too large. Maximum limit is 5MB." });
+    }
+    return res.status(400).json({ message: err.message });
+  }
+
+  // 2. Check kung ang error ay galing sa ating custom fileFilter (Invalid Type)
+  if (err.message.includes("Invalid file type")) {
+    return res.status(400).json({ message: err.message });
+  }
+
+  // 3. Fallback para sa lahat ng ibang hindi inaasahang errors
+  console.error("🔥 Server Error:", err.stack);
+  res.status(500).json({ message: "Something went wrong on the server." });
+});
 
 /* ======================================================
 BASIC HEALTH CHECK
@@ -1273,3 +1501,4 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
+

@@ -68,8 +68,8 @@ function Login() {
         // save user session
         localStorage.setItem("token", data.token);
         localStorage.setItem("user", JSON.stringify(data.user));
-
-        const userRole = data.user?.role?.toLowerCase();
+        
+       const userRole = String(data.user?.role || "").toLowerCase();
         const mustChangePassword = Boolean(data.user?.mustChangePassword);
 
         // ✅ Check if need to change password

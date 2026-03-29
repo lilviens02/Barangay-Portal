@@ -1,17 +1,20 @@
 import React, { useEffect, useState } from "react";
 import "./Dashboard.css";
 // 1. Dinagdag ang useNavigate (para sa paglipat ng page)
-import { useNavigate } from "react-router-dom"; 
+import { useNavigate } from "react-router-dom";
 import { FaClipboardList, FaClock, FaCheckCircle, FaPlus } from "react-icons/fa";
+
 
 function Dashboard() {
   // 2. In-initialize ang navigate
-  const navigate = useNavigate(); 
+  const navigate = useNavigate();
   const [requests, setRequests] = useState([]);
+
 
   useEffect(() => {
     const token = localStorage.getItem("token");
     let userData = null;
+
 
     try {
       userData = JSON.parse(localStorage.getItem("user"));
@@ -19,11 +22,13 @@ function Dashboard() {
       userData = null;
     }
 
+
     const loadRequests = async () => {
       if (!userData?.id || !token) {
         setRequests([]);
         return;
       }
+
 
       try {
         const res = await fetch(`http://localhost:5000/api/resident-requests/${userData.id}`, {
@@ -44,17 +49,21 @@ function Dashboard() {
       }
     };
 
+
     loadRequests();
   }, []);
 
+
   const pending = requests.filter(r => r.Status === "Pending").length;
   const completed = requests.filter(
-    r => r.Status === "Approved" || r.Status === "Issued"
+    r => r.Status === "Approved" || r.Status === "Released"
   ).length;
+
 
   const recent = [...requests]
     .sort((a, b) => new Date(b.DateSubmitted) - new Date(a.DateSubmitted))
     .slice(0, 5);
+
 
   return (
     <div className="dashboard-page">
@@ -64,6 +73,7 @@ function Dashboard() {
           <p>Overview of your service requests</p>
         </div>
       </div>
+
 
       <div className="dashboard-cards">
         <div className="stat-card">
@@ -83,12 +93,14 @@ function Dashboard() {
         </div>
       </div>
 
+
       <div className="quick-actions">
         {/* 3. DINAGDAGAN NG onClick PARA GUMANA NA ANG BUTTON */}
         <button className="action-btn" onClick={() => navigate("/resident/requests")}>
           <FaPlus/> New Request
         </button>
       </div>
+
 
       <div className="table-card">
         <div className="table-title">Request Logs</div>
@@ -126,5 +138,6 @@ function Dashboard() {
     </div>
   );
 }
+
 
 export default Dashboard;

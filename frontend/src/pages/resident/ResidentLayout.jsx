@@ -31,7 +31,14 @@ function ResidentLayout() {
           <NavLink to="/resident/requests">
             My Requests
           </NavLink>
+
+
+
+          <NavLink to="/resident/profile">My Profile</NavLink>
         </nav>
+        <NavLink to="/resident/messages">
+  Messages
+</NavLink>
 
         <div className="resident-logout" onClick={logout}>
           Logout

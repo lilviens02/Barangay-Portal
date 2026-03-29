@@ -53,34 +53,39 @@ function StaffDashboard() {
     // ✅ FIX: Isinama ang fetchResidents sa dependency array
   }, [search, statusFilter, residentSearch, fetchResidents]); 
 
-  const updateStatus = (id, status) => {
-    const token = localStorage.getItem("token");
-    
+  const updateStatus = async (id, status) => {
+  const token = localStorage.getItem("token");
 
-    fetch(`http://localhost:5000/api/requests/${id}/status`, {
-      method: "PUT",
+  try {
+    const endpoint =
+      status === "Approved"
+        ? `http://localhost:5000/api/requests/${id}/approve`
+        : `http://localhost:5000/api/requests/${id}/reject`;
+
+    const res = await fetch(endpoint, {
+      method: "POST",
       headers: {
-        "Content-Type": "application/json",
         Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify({
-  status
-})
-    })
-    .then(res => res.json())
-    .then(data => {
-      alert(data.message);
-      setRequests(prev =>
-        prev.map(req =>
-          req.RequestID === id ? { ...req, Status: status } : req
-        )
-      );
-    })
-    .catch(err => {
-      console.error("Update error:", err);
-      alert("Failed to update request");
+      }
     });
-  };
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data.message || "Failed to update request");
+    }
+
+    alert(data.message);
+    setRequests((prev) =>
+      prev.map((req) =>
+        req.RequestID === id ? { ...req, Status: status } : req
+      )
+    );
+  } catch (err) {
+    console.error("Update error:", err);
+    alert(err.message || "Failed to update request");
+  }
+};
 
   return (
     
@@ -109,7 +114,8 @@ function StaffDashboard() {
               <option value="Pending">Pending</option>
               <option value="Approved">Approved</option>
               <option value="Rejected">Rejected</option>
-              <option value="Issued">Issued</option>
+
+            {/* Removed: Issued is not a real backend status in the current schema  <option value="Issued">Issued</option>*/} 
             </select>
           </div>
 

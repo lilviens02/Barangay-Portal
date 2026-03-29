@@ -1,14 +1,7 @@
 const Imap = require("node-imap");
 const { simpleParser } = require("mailparser");
-const mysql = require("mysql2");
 require("dotenv").config();
-
-const db = mysql.createConnection({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME
-});
+const db = require("../db");
 
 const imap = new Imap({
   user: process.env.EMAIL,
@@ -24,12 +17,13 @@ function openInbox(cb) {
 
 imap.once("ready", () => {
   openInbox((err, box) => {
-    if (err) throw err;
+    if (err) {
+      console.error("IMAP inbox error:", err);
+      return;
+    }
 
     imap.on("mail", () => {
-      const f = imap.seq.fetch(box.messages.total + ":*", {
-        bodies: ""
-      });
+      const f = imap.seq.fetch(`${box.messages.total}:*`, { bodies: "" });
 
       f.on("message", (msg) => {
         msg.on("body", (stream) => {
@@ -38,11 +32,9 @@ imap.once("ready", () => {
 
             const subject = parsed.subject || "";
             const body = parsed.text || "";
-            const fromEmail = parsed.from?.value?.[0]?.address || "resident"; // Inayos ang semicolon error
+            const fromEmail = parsed.from?.value?.[0]?.address || "unknown";
 
-            // search reference number in subject or body
             const match = `${subject} ${body}`.match(/BRGY-\d{4}-\d+/i);
-
             if (!match) return;
 
             const reference = match[0].toUpperCase();
@@ -55,14 +47,12 @@ imap.once("ready", () => {
 
                 const requestId = result[0].RequestID;
 
-                // 1. I-save ang message sa messages table
                 db.query(
                   `INSERT INTO messages (RequestID, Sender, Body, Timestamp)
                    VALUES (?, ?, ?, NOW())`,
-                  [requestId, fromEmail, body] // Inayos: fromEmail gamit imbes na static "resident"
+                  [requestId, fromEmail, body]
                 );
 
-                // 2. I-save sa email_audit_logs (FR4 Requirement ni Sir)
                 db.query(
                   `INSERT INTO email_audit_logs
                    (RequestID, ReferenceNo, RecipientEmail, Subject, Body, Direction, Status, CreatedAt)
@@ -70,8 +60,7 @@ imap.once("ready", () => {
                   [
                     requestId,
                     reference,
-                  process.env.EMAIL,
-
+                    process.env.EMAIL,
                     subject,
                     body,
                     "incoming",

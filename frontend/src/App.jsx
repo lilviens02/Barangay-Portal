@@ -15,6 +15,7 @@ import StaffLayout from "./pages/staff/StaffLayout";
 import ResidentApproval from "./pages/staff/ResidentApproval"; 
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import CertificatePage from "./pages/CertificatePage";
+import MessagesPage from "./pages/MessagesPage";
 
 import ProtectedRoute from "./components/ProtectedRoute";
 // ✅ 1. Idinagdag ang import dito
@@ -80,6 +81,15 @@ function App() {
           }
         />
 
+        <Route
+  path="/resident/messages"
+  element={
+    <ProtectedRoute allowedRoles={["resident"]}>
+      <MessagesPage />
+    </ProtectedRoute>
+  }
+/>
+
         {/* ✅ 2. DITO DAPAT ILAGAY (Sa loob ng Routes) */}
         <Route
           path="/force-change-password"
@@ -89,6 +99,9 @@ function App() {
             </ProtectedRoute>
           }
         />
+
+
+        
       </Routes>
     </BrowserRouter>
   );

@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import Navbar from "../components/Navbar";
-import Footer from "../components/Footer";
+// ✅ TINANGGAL ANG NAVBAR AT FOOTER IMPORTS
 import "./ChangePassword.css";
 
 function ChangePassword() {
@@ -52,11 +51,14 @@ function ChangePassword() {
         localStorage.setItem("token", data.token);
         localStorage.setItem("user", JSON.stringify(data.user));
 
-        if (role === "superadmin") {
-          navigate("/superadmin");
-        } else {
-          navigate("/staff");
-        }
+        const nextRoute =
+          role === "superadmin"
+            ? "/superadmin"
+            : role === "staff"
+            ? "/staff"
+            : "/";
+
+        navigate(nextRoute);
       } else {
         alert(data.message || "Failed to change password");
       }
@@ -68,35 +70,34 @@ function ChangePassword() {
     }
   };
 
+  // ✅ PINALITANG RETURN: TINANGGAL ANG <Navbar /> AT <Footer /> WRAPPER
   return (
-    <>
-      <Navbar />
-      <main className="change-page page-with-navbar">
-        <div className="change-card">
-          <h1>Change Temporary Password</h1>
-          <p>You must change your password before using the dashboard.</p>
+    <main className="change-page">
+      <div className="change-card">
+        <h1>Change Temporary Password</h1>
+        <p>You must change your password before using the dashboard.</p>
 
-          <form onSubmit={handleSubmit} className="change-form">
-            <input
-              type="password"
-              placeholder="New Password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-            />
-            <input
-              type="password"
-              placeholder="Confirm New Password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-            />
-            <button type="submit" disabled={loading}>
-              {loading ? "Saving..." : "Save New Password"}
-            </button>
-          </form>
-        </div>
-      </main>
-      <Footer />
-    </>
+        <form onSubmit={handleSubmit} className="change-form">
+          <input
+            type="password"
+            placeholder="New Password"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+          />
+
+          <input
+            type="password"
+            placeholder="Confirm New Password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+          />
+
+          <button type="submit" disabled={loading}>
+            {loading ? "Saving..." : "Save New Password"}
+          </button>
+        </form>
+      </div>
+    </main>
   );
 }
 

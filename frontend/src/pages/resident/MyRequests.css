@@ -109,6 +109,16 @@ background:#fee2e2;
 color:#dc2626;
 }
 
+.status.released{
+background:#dbeafe;
+color:#1d4ed8;
+}
+
+.status.cancelled{
+background:#f3f4f6;
+color:#6b7280;
+}
+
 .empty{
 text-align:center;
 padding:40px;

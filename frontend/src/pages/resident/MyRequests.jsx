@@ -86,7 +86,7 @@ function MyRequests() {
                   <td>{req.Purpose}</td>
                   <td>{new Date(req.DateSubmitted).toLocaleDateString()}</td>
                   <td>
-                    <span className={`status-badge ${String(req.Status).toLowerCase()}`}>
+                    <span className={`status ${String(req.Status).toLowerCase()}`}>
                       {req.Status}
                     </span>
                   </td>

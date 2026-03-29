@@ -38,7 +38,7 @@ function CertificatePage() {
         {data.Firstname} {data.Lastname}
       </h1>
       <p><strong>Document:</strong> {data.CertName}</p>
-      <p><strong>Purpose:</strong> {data.Description}</p>
+      <p><strong>Purpose:</strong> {data.Description || data.CertName}</p>
       <p><strong>Reference:</strong> {data.ReferenceNo}</p>
       <p><strong>Date Issued:</strong> {new Date(data.DateIssued).toLocaleDateString()}</p>
       <p><strong>Signed By:</strong> {data.SignedBy}</p>
