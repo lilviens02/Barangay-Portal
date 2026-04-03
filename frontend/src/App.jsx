@@ -81,6 +81,7 @@ function App() {
           }
         />
 
+        {/* MESSAGES PAGE */}
         <Route
   path="/resident/messages"
   element={

@@ -177,7 +177,7 @@ const createDefaultStaff = async () => {
   const staffEmail = "staff@barangay.com";
 
   db.query(
-    "SELECT * FROM barangay_staff WHERE Email = ?",
+    "SELECT * FROM barangay_staff WHERE LOWER(Email) = LOWER(?)",
     [staffEmail],
     async (err, results) => {
       if (err) {
@@ -469,7 +469,7 @@ app.post("/api/register", async (req, res) => {
   } = req.body;
 
   // 1. CHECK REQUIRED FIELDS
-  if (!firstname || !lastname || !gender || !email || !password) {
+if (!firstname || !lastname || !gender || !birthdate || !contact || !address || !email || !password) {
     return res.status(400).json({ message: "Required fields missing" });
   }
 
@@ -572,9 +572,10 @@ app.post("/api/create-staff", authenticateToken, async (req, res) => {
   }
 
   const { fullname, email, gender, birthdate } = req.body;
+const normalizedEmail = String(email || "").trim().toLowerCase();
 
   // 2. Validation: Fullname at Email lang ang mandatory
-  if (!fullname || !email) {
+  if (!fullname || !normalizedEmail) {
     return res.status(400).json({
       message: "Required fields missing"
     });
@@ -596,7 +597,7 @@ app.post("/api/create-staff", authenticateToken, async (req, res) => {
       sql,
       [
         fullname,
-        email,
+        normalizedEmail,
         hashedPassword,
         birthdate || null,
         gender || null,
@@ -652,7 +653,7 @@ app.post("/api/login", async (req, res) => {
   const normalizedEmail = String(email).trim().toLowerCase();
 
 
-  let table = "", sql = "", values = [];
+  let sql = "", values = [];
 
 
   // ✅ GINAMIT ANG normalizedEmail SA VALUES PARA SA SEARCH
@@ -967,10 +968,16 @@ app.get("/api/resident-requests/:id", authenticateToken, (req, res) => {
 
 });
 
--
+/* ======================================================
+GET MESSAGES BY REQUEST ID (FR2 - COMPLETE VIEW)  
+   ======================================================*/
 app.get("/api/messages/:requestId", authenticateToken, async (req, res) => {
   try {
     const requestId = Number(req.params.requestId);
+
+    if (!Number.isInteger(requestId) || requestId <= 0) {
+      return res.status(400).json({ message: "Invalid request ID" });
+    }
 
     const [requestRows] = await dbp.query(
       `SELECT r.RequestID, r.ResidentID, r.ReferenceNo, r.DocumentType, r.Status,
@@ -986,8 +993,18 @@ app.get("/api/messages/:requestId", authenticateToken, async (req, res) => {
     }
 
     const request = requestRows[0];
+    const isResident = req.user.role === "resident";
+if (!req.user?.id || !req.user?.role) {
+  return res.status(401).json({ message: "Unauthorized" });
+}
+    const isOwner = req.user.id === request.ResidentID;
+    const isStaff = req.user.role === "staff" || req.user.role === "superadmin";
 
-    if (req.user.role === "resident" && req.user.id !== request.ResidentID) {
+    if (isResident && !isOwner) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    if (!isResident && !isStaff) {
       return res.status(403).json({ message: "Access denied" });
     }
 
@@ -1017,8 +1034,6 @@ app.get("/api/messages/:requestId", authenticateToken, async (req, res) => {
     return res.status(500).json({ message: "Server error" });
   }
 });
-
-
 
 
 
@@ -1171,6 +1186,7 @@ app.post("/api/requests", authenticateToken, upload.single("file"), async (req, 
     const [duplicateRows] = await dbp.query(
       `SELECT RequestID FROM requests
        WHERE ResidentID = ? AND DocumentType = ? AND Purpose = ?
+       AND Status IN ('Pending', 'Approved', 'Released')
        AND Status != 'Rejected'`,
       [user_id, documentType, purpose]
     );
@@ -1242,7 +1258,7 @@ DOWNLOAD CERTIFICATE
  Uses path.resolve for absolute path safety
 Uses ROLES constants
 ======================================================*/
-app.get("/api/certificates/download/:reference", authenticateToken, requireStaffReady, (req, res) => {
+app.get("/api/certificates/download/:reference", authenticateToken, (req, res) => {
   // ✅ POINT #11: Ginamit ang ROLES Constant para iwas typo
   if (req.user.role !== ROLES.STAFF && req.user.role !== ROLES.ADMIN) {
     return res.status(403).json({ message: "Access denied" });
@@ -1317,8 +1333,7 @@ app.post("/api/requests/:id/approve", authenticateToken, requireStaffReady, asyn
 
     const fileName = `${requestData.ReferenceNo}-${Date.now()}.pdf`;
     const certificatePath = path.join(CERT_DIR, fileName);
-    const storedPath = path.relative(__dirname, certificatePath);
-
+const storedPath = path.posix.join("certificates", fileName);
     const pdfData = {
       name: `${requestData.Firstname} ${requestData.Lastname}`,
       document: requestData.DocumentType,
